@@ -16,6 +16,10 @@ import time
 import requests
 import websocket
 
+
+class CDPError(Exception):
+    """CDP 通信错误（含超时、连接被重置），方便上层捕获后重试。"""
+
 DEFAULT_BROWSER = "http://localhost:9222"
 
 
@@ -58,11 +62,14 @@ class CDP:
 
     def send(self, method, params=None):
         self.mid += 1
-        self.ws.send(json.dumps({"id": self.mid, "method": method, "params": params or {}}))
-        while True:
-            m = json.loads(self.ws.recv())
-            if m.get("id") == self.mid:
-                return m
+        try:
+            self.ws.send(json.dumps({"id": self.mid, "method": method, "params": params or {}}))
+            while True:
+                m = json.loads(self.ws.recv())
+                if m.get("id") == self.mid:
+                    return m
+        except (websocket.WebSocketException, OSError) as e:
+            raise CDPError(f"{method} failed: {e}") from e
 
     def eval(self, expr):
         """evaluate + awaitPromise + returnByValue；JS 异常返回 {"__error__": ...}。"""
@@ -89,24 +96,27 @@ class CDP:
 class Tab:
     """新建标签页并连接（对应 follow.py 的 Tab 类）。用完 close()。"""
 
-    def __init__(self, url=None, browser=DEFAULT_BROWSER):
+    def __init__(self, url=None, browser=DEFAULT_BROWSER, timeout=60):
         if url:
             info = requests.put(f"{browser}/json/new?{url}", timeout=15).json()
         else:
             info = requests.get(f"{browser}/json/new", timeout=15).json()
         self.id = info["id"]
-        self.ws = websocket.create_connection(info["webSocketDebuggerUrl"], timeout=60)
+        self.ws = websocket.create_connection(info["webSocketDebuggerUrl"], timeout=timeout)
         self.mid = 0
         self.send("Page.enable")
         self.send("Runtime.enable")
 
     def send(self, method, params=None):
         self.mid += 1
-        self.ws.send(json.dumps({"id": self.mid, "method": method, "params": params or {}}))
-        while True:
-            m = json.loads(self.ws.recv())
-            if m.get("id") == self.mid:
-                return m
+        try:
+            self.ws.send(json.dumps({"id": self.mid, "method": method, "params": params or {}}))
+            while True:
+                m = json.loads(self.ws.recv())
+                if m.get("id") == self.mid:
+                    return m
+        except (websocket.WebSocketException, OSError) as e:
+            raise CDPError(f"{method} failed: {e}") from e
 
     def eval(self, expr):
         r = self.send("Runtime.evaluate", {

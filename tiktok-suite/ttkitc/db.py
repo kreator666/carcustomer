@@ -225,9 +225,15 @@ class LeadRepo:
         return self.get(lead_id)
 
     def list_enrich_targets(self):
-        """enrich --all-new 目标：status='new' 且 region 为空（comment/list 精简对象缺的行）。"""
+        """enrich --all-new 目标：status='new' 且信息缺失的 lead。
+
+        原标准是 region 为空；实测（2026-11）web user-detail 已不返回 region 字段，
+        所以用「region 且 language 均为空」作为「尚未 enrich」的判据——
+        enrich 后 language 必有值，会自动退出目标集。
+        """
         return self.db.query(
-            "SELECT * FROM leads WHERE status='new' AND (region IS NULL OR region='') ORDER BY id")
+            "SELECT * FROM leads WHERE status='new' "
+            "AND (region IS NULL OR region='') AND (language IS NULL OR language='') ORDER BY id")
 
     def touch(self, lead_id):
         self.db.execute("UPDATE leads SET last_interaction_at=? WHERE id=?",
